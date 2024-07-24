@@ -91,7 +91,7 @@ class TargetPropLearner(zenkai.GradLearner):
         self, in_features: int, h1_features: int,
         h2_features: int, h3_features: int, out_features: int
     ):
-        """_summary_
+        """
 
         Args:
             in_features (int): the input features

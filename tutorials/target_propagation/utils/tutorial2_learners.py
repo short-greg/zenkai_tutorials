@@ -3,11 +3,16 @@ import zenkai
 from zenkai import State, IO, Idx
 import zenkai
 from .utils import Layer
+import torch
 
 from .tutorial1_learners import AutoencoderLearner
 
 
 class DiffAutoencoderLearner(AutoencoderLearner):
+    
+    def __init__(self, in_features: int, out_features: int, rec_weight: float = 1, dropout_p: float = None, x_lr: float=1.0):
+        super().__init__(in_features, out_features, rec_weight, dropout_p)
+        self.x_lr = x_lr
 
     def step_x(self, x: IO, t: IO, state: State, batch_idx: Idx = None) -> IO:
         """Propagate the target and the output back and calculate the difference
@@ -24,36 +29,49 @@ class DiffAutoencoderLearner(AutoencoderLearner):
         yx = self.feedback(state._y.f)
         tx = self.feedback(t.f)
 
-        return x.acc_dx([yx - tx]).detach()
+        return x.acc_dx([yx - tx], self.x_lr).detach()
 
 
 class DiffTargetPropLearner(zenkai.GradLearner):
 
-  def __init__(
-    self, in_features: int, h1_features: int,
-    h2_features: int, h3_features: int, out_features: int
-  ):
-    # Same as TargetPropLearner
-    # but uses the DiffAutoencoderLearner
-    super().__init__()
-    self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
-    self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
-    self.forward_on = True
-    self.reverse_on = True
+    def __init__(
+      self, in_features: int, h1_features: int,
+      h2_features: int, h3_features: int, out_features: int,
+      x_lr: float=1.0
+    ):
+        # Same as TargetPropLearner
+        # but uses the DiffAutoencoderLearner
+        super().__init__()
+        self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
+        self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
+        self.forward_on = True
+        self.reverse_on = True
 
-    self.layer1 = DiffAutoencoderLearner(
-      in_features, h1_features, 1.0, 0.5
-    )
-    self.layer2 = DiffAutoencoderLearner(
-      h1_features, h2_features, 1.0, dropout_p=0.25
-    )
-    self.layer3 = DiffAutoencoderLearner(
-      h2_features, h3_features, 1.0, dropout_p=0.25
-    )
-    self.layer4 = Layer(
-      h3_features, out_features, False, False
-    )
-    self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-    self._optim.prep_theta([self.layer4])
-    self.assessments = []
-    self.r_assessments = []
+        self.layer1 = DiffAutoencoderLearner(
+          in_features, h1_features, 1.0, 0.5, x_lr=x_lr
+        )
+        self.layer2 = DiffAutoencoderLearner(
+          h1_features, h2_features, 1.0, dropout_p=0.25, x_lr=x_lr
+        )
+        self.layer3 = DiffAutoencoderLearner(
+          h2_features, h3_features, 1.0, dropout_p=0.25, x_lr=x_lr
+        )
+        self.layer4 = Layer(
+          h3_features, out_features, False, False
+        )
+        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
+        self._optim.prep_theta([self.layer4])
+        self.assessments = []
+        self.r_assessments = []
+    
+    def accumulate(self, x: IO, state: State, batch_idx: Idx=None):
+        super().accumulate(x, state, batch_idx)
+        self.assessments = [layer.assessment for layer in [self.layer1, self.layer2, self.layer3]]
+        self.r_assessments = [layer.r_assessment for layer in [self.layer1, self.layer2, self.layer3]]
+
+    def forward_nn(self, x: IO, state: State, batch_idx: Idx = None) -> torch.Tensor:
+
+        y = self.layer1(x.f)
+        y = self.layer2(y)
+        y = self.layer3(y)
+        return self.layer4(y)
