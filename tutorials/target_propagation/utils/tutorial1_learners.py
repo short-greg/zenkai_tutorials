@@ -4,13 +4,27 @@ from zenkai import State, IO, Idx, iou
 from torch import Tensor
 import zenkai
 from .utils import Layer
+import torch.nn as nn
+import typing
+import torch
+
+OPT_MODULE_TYPE = typing.Optional[typing.Type[nn.Module]]
+MODULE_TYPE = typing.Type[nn.Module]
 
 
 class AutoencoderLearner(zenkai.GradLearner):
     """Component for building a TargetPropagationLearner
     """
 
-    def __init__(self, in_features: int, out_features: int, rec_weight: float=1.0, dropout_p: float=None):
+    def __init__(
+        self, in_features: int, out_features: int, 
+        rec_weight: float=1.0, dropout_p: float=None, 
+        forward_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+        reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+        rec_loss: MODULE_TYPE=nn.MSELoss,
+        forward_in_act: typing.Type[nn.Module]=None,
+        targetf: OPT_MODULE_TYPE=None
+    ):
         """Create an AutoencoderLearner with specificed input and output Features
 
         Args:
@@ -21,16 +35,18 @@ class AutoencoderLearner(zenkai.GradLearner):
         """
         super().__init__()
         self._criterion = zenkai.NNLoss('MSELoss', reduction='sum')
-        self._reverse_criterion = zenkai.NNLoss('MSELoss', reduction='sum')
+        self._reverse_criterion = zenkai.NNLoss(rec_loss, reduction='sum')
         self.forward_on = True
         self.reverse_on = True
         self.feedforward = Layer(
-            in_features, out_features, True, True, dropout_p
+            in_features, out_features, True, 
+            forward_act, dropout_p, forward_in_act
         )
+        self.targetf = targetf if targetf is not None else lambda x: x
         self.rec_weight = rec_weight
 
         self.feedback = Layer(
-            out_features, in_features, False, True
+            out_features, in_features, False, reverse_act
         )
         self.assessment = None
         self.r_assessment = None
@@ -61,8 +77,8 @@ class AutoencoderLearner(zenkai.GradLearner):
             state (State): the learning state
         """
         z = self.feedback(state._y.f)
-
         z_loss = self._reverse_criterion.assess(x, iou(z))
+        # print(state._y.f[0, :10], t.f[0, :10])
         t_loss = self._criterion.assess(state._y, t)
         (t_loss + self.rec_weight * z_loss).backward()
         self.i += 1
@@ -81,15 +97,18 @@ class AutoencoderLearner(zenkai.GradLearner):
         Returns:
             IO: 
         """
-        return iou(self.feedback(t.f))
-
+        return iou(self.feedback(self.targetf(t.f)))
 
 
 class TargetPropLearner(zenkai.GradLearner):
 
     def __init__(
         self, in_features: int, h1_features: int,
-        h2_features: int, h3_features: int, out_features: int
+        h2_features: int, h3_features: int, out_features: int,
+        act: OPT_MODULE_TYPE=nn.LeakyReLU,
+        reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+        rec_loss: MODULE_TYPE=nn.MSELoss,
+        targetf: OPT_MODULE_TYPE=None
     ):
         """
 
@@ -107,16 +126,22 @@ class TargetPropLearner(zenkai.GradLearner):
         self.reverse_on = True
 
         self.layer1 = AutoencoderLearner(
-            in_features, h1_features, 1.0, 0.5
+            in_features, h1_features, 1.0, 0.5, forward_act=act, reverse_act=nn.Tanh,
+            rec_loss=nn.MSELoss,
+            targetf=targetf
         )
         self.layer2 = AutoencoderLearner(
-            h1_features, h2_features, 1.0, dropout_p=0.25
+            h1_features, h2_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
+            rec_loss=rec_loss,
+            targetf=targetf
         )
         self.layer3 = AutoencoderLearner(
-            h2_features, h3_features, 1.0, dropout_p=0.25
+            h2_features, h3_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
+            rec_loss=rec_loss,
+            targetf=targetf
         )
         self.layer4 = Layer(
-            h3_features, out_features, False, False
+            h3_features, out_features, False, act=None
         )
         self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
         self._optim.prep_theta([self.layer4])
@@ -151,16 +176,16 @@ class BaselineLearner1(zenkai.GradLearner):
         self.reverse_on = True
 
         self.layer1 = Layer(
-            in_features, h1_features, True, True, 0.5
+            in_features, h1_features, True, dropout_p=0.5
         )
         self.layer2 = Layer(
-            h1_features, h2_features, True, True, dropout_p=0.25
+            h1_features, h2_features, True, dropout_p=0.25
         )
         self.layer3 = Layer(
-            h2_features, h3_features, True, True, dropout_p=0.25
+            h2_features, h3_features, True, dropout_p=0.25
         )
         self.layer4 = Layer(
-            h3_features, out_features, False, False
+            h3_features, out_features, False, None
         )
         self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
         self._optim.prep_theta(self)

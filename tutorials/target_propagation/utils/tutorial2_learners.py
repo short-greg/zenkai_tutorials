@@ -1,17 +1,30 @@
 import zenkai
-import zenkai
 from zenkai import State, IO, Idx
-import zenkai
+from torch import nn
 from .utils import Layer
 import torch
+import typing
 
-from .tutorial1_learners import AutoencoderLearner
+from .tutorial1_learners import AutoencoderLearner, OPT_MODULE_TYPE, MODULE_TYPE
 
 
 class DiffAutoencoderLearner(AutoencoderLearner):
     
-    def __init__(self, in_features: int, out_features: int, rec_weight: float = 1, dropout_p: float = None, x_lr: float=1.0):
-        super().__init__(in_features, out_features, rec_weight, dropout_p)
+    def __init__(
+        self, in_features: int, out_features: int, rec_weight: float = 1, 
+        dropout_p: float = None, x_lr: float=1.0, 
+        forward_act: typing.Type[nn.Module]=nn.LeakyReLU,
+        reverse_act: typing.Type[nn.Module]=nn.LeakyReLU,
+        forward_in_act: typing.Type[nn.Module]=None,
+        rec_loss: typing.Type[nn.Module]=nn.MSELoss,
+        targetf: OPT_MODULE_TYPE=None
+    ):
+        super().__init__(
+            in_features, out_features, rec_weight, 
+            dropout_p, forward_act=forward_act, reverse_act=reverse_act, rec_loss=rec_loss,
+            forward_in_act=forward_in_act,
+            targetf=targetf
+          )
         self.x_lr = x_lr
 
     def step_x(self, x: IO, t: IO, state: State, batch_idx: Idx = None) -> IO:
@@ -25,11 +38,11 @@ class DiffAutoencoderLearner(AutoencoderLearner):
         Returns:
             IO: the target for the incoming layer
         """
-
         yx = self.feedback(state._y.f)
-        tx = self.feedback(t.f)
+        tx = self.feedback(self.targetf(t.f))
 
         return x.acc_dx([yx - tx], self.x_lr).detach()
+
 
 
 class DiffTargetPropLearner(zenkai.GradLearner):
@@ -37,7 +50,12 @@ class DiffTargetPropLearner(zenkai.GradLearner):
     def __init__(
       self, in_features: int, h1_features: int,
       h2_features: int, h3_features: int, out_features: int,
-      x_lr: float=1.0
+      x_lr: float=1.0,
+      act: OPT_MODULE_TYPE=nn.LeakyReLU,
+      reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+      forward_in_act: OPT_MODULE_TYPE=None,
+      rec_loss: MODULE_TYPE=nn.MSELoss,
+      targetf: OPT_MODULE_TYPE=None
     ):
         # Same as TargetPropLearner
         # but uses the DiffAutoencoderLearner
@@ -48,16 +66,23 @@ class DiffTargetPropLearner(zenkai.GradLearner):
         self.reverse_on = True
 
         self.layer1 = DiffAutoencoderLearner(
-          in_features, h1_features, 1.0, 0.5, x_lr=x_lr
+          in_features, h1_features, 1.0, 0.5, x_lr=x_lr, 
+          forward_act=act, reverse_act=nn.Sigmoid, rec_loss=nn.MSELoss,
+          forward_in_act=None
         )
         self.layer2 = DiffAutoencoderLearner(
-          h1_features, h2_features, 1.0, dropout_p=0.25, x_lr=x_lr
+          h1_features, h2_features, 1.0, dropout_p=0.25, 
+          x_lr=x_lr, forward_act=act, reverse_act=reverse_act, rec_loss=rec_loss,
+          forward_in_act=forward_in_act
         )
         self.layer3 = DiffAutoencoderLearner(
-          h2_features, h3_features, 1.0, dropout_p=0.25, x_lr=x_lr
+          h2_features, h3_features, 1.0, dropout_p=0.25,
+          x_lr=x_lr, forward_act=act, reverse_act=reverse_act, rec_loss=rec_loss,
+          forward_in_act=forward_in_act
         )
         self.layer4 = Layer(
-          h3_features, out_features, False, False
+          h3_features, out_features,
+          False, None, None
         )
         self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
         self._optim.prep_theta([self.layer4])
