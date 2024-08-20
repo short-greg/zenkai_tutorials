@@ -23,6 +23,8 @@ class AutoencoderLearner(zenkai.GradLearner):
         reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
         rec_loss: MODULE_TYPE=nn.MSELoss,
         forward_in_act: typing.Type[nn.Module]=None,
+        forward_norm: bool=True,
+        reverse_norm: bool=True,
         targetf: OPT_MODULE_TYPE=None
     ):
         """Create an AutoencoderLearner with specificed input and output Features
@@ -39,14 +41,14 @@ class AutoencoderLearner(zenkai.GradLearner):
         self.forward_on = True
         self.reverse_on = True
         self.feedforward = Layer(
-            in_features, out_features, True, 
+            in_features, out_features, forward_norm, 
             forward_act, dropout_p, forward_in_act
         )
         self.targetf = targetf if targetf is not None else lambda x: x
         self.rec_weight = rec_weight
 
         self.feedback = Layer(
-            out_features, in_features, False, reverse_act
+            out_features, in_features, reverse_norm, reverse_act
         )
         self.assessment = None
         self.r_assessment = None
@@ -127,17 +129,17 @@ class TargetPropLearner(zenkai.GradLearner):
 
         self.layer1 = AutoencoderLearner(
             in_features, h1_features, 1.0, 0.5, forward_act=act, reverse_act=nn.Tanh,
-            rec_loss=nn.MSELoss,
+            rec_loss=nn.MSELoss,forward_norm=True, reverse_norm=False,
             targetf=targetf
         )
         self.layer2 = AutoencoderLearner(
             h1_features, h2_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
-            rec_loss=rec_loss,
+            rec_loss=rec_loss, forward_norm=True, reverse_norm=True,
             targetf=targetf
         )
         self.layer3 = AutoencoderLearner(
             h2_features, h3_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
-            rec_loss=rec_loss,
+            rec_loss=rec_loss, forward_norm=True, reverse_norm=True,
             targetf=targetf
         )
         self.layer4 = Layer(

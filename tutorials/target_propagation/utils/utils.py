@@ -115,6 +115,7 @@ def train(
     loss = nn.CrossEntropyLoss(reduction='mean')
 
     zenkai.set_lmode(learner, zenkai.LMode.WithStep)
+    losses = []
 
     for i in range(n_epochs):
 
@@ -132,6 +133,7 @@ def train(
                 assessment = loss(y, x1_t)
                 assessment.backward()
                 results['loss'].append(assessment.item())
+                losses.append(assessment.item())
                 assessments = {i: v.item() for i, v in enumerate(learner.assessments)}
                 r_assessments = {i: v.item() for i, v in enumerate(learner.r_assessments)}
 
@@ -149,6 +151,7 @@ def train(
                     k: np.mean(v) for k, v in results.items()
                 })
                 pbar.update(1)
+    return losses
 
 def classify(
     learner: LearningMachine,
