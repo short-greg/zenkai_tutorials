@@ -6,7 +6,6 @@ import zenkai
 from .utils import Layer
 import torch.nn as nn
 import typing
-import torch
 
 OPT_MODULE_TYPE = typing.Optional[typing.Type[nn.Module]]
 MODULE_TYPE = typing.Type[nn.Module]
@@ -52,7 +51,6 @@ class AutoencoderLearner(zenkai.GradLearner):
         )
         self.assessment = None
         self.r_assessment = None
-        # Considering changing this
         self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
         self._optim.prep_theta(self)
         self.i = 0

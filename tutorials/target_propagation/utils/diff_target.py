@@ -5,7 +5,10 @@ from .utils import Layer
 import torch
 import typing
 
-from .tutorial1_learners import AutoencoderLearner, OPT_MODULE_TYPE, MODULE_TYPE
+from .target import (
+    AutoencoderLearner, 
+    OPT_MODULE_TYPE, MODULE_TYPE
+)
 
 
 class DiffAutoencoderLearner(AutoencoderLearner):
@@ -30,7 +33,7 @@ class DiffAutoencoderLearner(AutoencoderLearner):
           )
         self.x_lr = x_lr
 
-    def step_x(self, x: IO, t: IO, state: State, batch_idx: Idx = None) -> IO:
+    def step_x(self, x: IO, t: IO, state: State) -> IO:
         """Propagate the target and the output back and calculate the difference
 
         Args:
@@ -45,7 +48,6 @@ class DiffAutoencoderLearner(AutoencoderLearner):
         tx = self.feedback(self.targetf(t.f))
 
         return x.acc_dx([yx - tx], self.x_lr).detach()
-
 
 
 class DiffTargetPropLearner(zenkai.GradLearner):
@@ -69,7 +71,7 @@ class DiffTargetPropLearner(zenkai.GradLearner):
 
         self.layer1 = DiffAutoencoderLearner(
           in_features, h1_features, 1.0, 0.5, x_lr=x_lr, 
-          forward_act=act, reverse_act=nn.Sigmoid, rec_loss=nn.MSELoss,
+          forward_act=act, reverse_act=nn.Tanh, rec_loss=nn.MSELoss,
           forward_norm=True, reverse_norm=False,
           forward_in_act=None
         )
@@ -90,7 +92,7 @@ class DiffTargetPropLearner(zenkai.GradLearner):
           False, None, None
         )
         self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta([self.layer4])
+        self._optim.prep_theta()
         self.assessments = []
         self.r_assessments = []
     
