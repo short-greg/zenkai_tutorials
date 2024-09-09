@@ -1,11 +1,11 @@
 import zenkai
 from zenkai import State, IO, Idx
 from torch import nn
-from .utils import Layer
+from ..modules import Layer
 import torch
 import typing
 
-from .target import (
+from .target_prop import (
     AutoencoderLearner, 
     OPT_MODULE_TYPE, MODULE_TYPE
 )

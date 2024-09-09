@@ -3,7 +3,7 @@ import zenkai
 from zenkai import State, IO, Idx, iou
 from torch import Tensor
 import zenkai
-from .utils import Layer
+from ..modules import Layer
 import torch.nn as nn
 import typing
 
@@ -124,7 +124,6 @@ class TargetPropLearner(zenkai.GradLearner):
         self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
         self.forward_on = True
         self.reverse_on = True
-
         self.layer1 = AutoencoderLearner(
             in_features, h1_features, 1.0, 0.5, forward_act=act, reverse_act=nn.Tanh,
             rec_loss=nn.MSELoss,forward_norm=True, reverse_norm=False,
@@ -198,4 +197,3 @@ class BaselineLearner1(zenkai.GradLearner):
         y = self.layer2(y)
         y = self.layer3(y)
         return self.layer4(y)
-

@@ -10,7 +10,8 @@ import numpy as np
 def train(
     learner: LearningMachine,
     dataset: torch_data.Dataset,
-    n_epochs: int, device='cpu'
+    n_epochs: int, device='cpu',
+    validate: bool=False
 ):
     learner = learner.to(device)
     loss = nn.CrossEntropyLoss(reduction='mean')
@@ -30,11 +31,13 @@ def train(
                 x = x.to(device)
                 x1_t = x1_t.to(device)
 
-                before = zenkai.params.to_pvec(learner)
+                if validate:
+                    before = zenkai.params.to_pvec(learner)
                 y = learner(x.view(x.shape[0], -1))
                 assessment = loss(y, x1_t)
                 assessment.backward()
-                assert (before != zenkai.params.to_pvec(learner)).any()
+                if validate:
+                    assert (before != zenkai.params.to_pvec(learner)).any()
                 results['loss'].append(assessment.item())
                 losses.append(assessment.item())
                 assessments = {i: v.item() for i, v in enumerate(learner.assessments)}
@@ -50,20 +53,4 @@ def train(
                 pbar.update(1)
     return losses
 
-def classify(
-    learner: LearningMachine,
-    dataset: torch_data.Dataset,
-    device='cpu',
-    # transform,
-):
-    dl = torch_data.DataLoader(dataset, len(dataset))
-    images, labels = next(iter(dl))
-    images = images.flatten(1)
-    # images, labels = dataset[:]
-
-    # images = transform(images)
-    y = learner(images)
-    outputs = torch.argmax(y, dim=-1)
-
-    return (outputs == labels).float().sum() / len(labels)
 

@@ -3,6 +3,8 @@ from zenkai import LearningMachine
 import zenkai
 from torch import nn
 import torch
+from torch.utils import data as torch_data
+from zenkai import iou
 
 
 class Layer(LearningMachine):
@@ -57,9 +59,70 @@ class STELayer(LearningMachine):
         return x.acc_grad()
 
     def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> Tuple | Any:
-        
         y = state._yl = self.linear(x.f)
         return torch.sign(y)
+
+
+class LoopLayer(LearningMachine):
+
+    def __init__(
+        self, in_features: int, out_features: int, 
+        theta_loops: int=1, theta_batch_size: int=None,
+        x_loops: int=1, lr: float=1e-3
+    ):
+        """
+
+        Args:
+            in_features (int): 
+            out_features (int): 
+            theta_loops (int, optional): . Defaults to 1.
+            theta_batch_size (int, optional): . Defaults to None.
+            x_loops (int, optional): . Defaults to 1.
+            lr (float, optional): . Defaults to 1e-3.
+        """
+        super().__init__(lmode=zenkai.LMode.StepPriority)
+        self.linear = nn.Linear(in_features, out_features)
+        self.loss = nn.MSELoss(reduction='none')
+        self.activation = nn.LeakyReLU()
+        self.learn_criterion = zenkai.NNLoss('MSELoss', reduction='batchmean', weight=0.5)
+        self.theta_optim = torch.optim.Adam(self.linear.parameters(), lr=lr)
+        self.theta_loops = theta_loops
+        self.theta_batch_size = theta_batch_size
+        self.x_loops = x_loops
+        self.lr = lr
+
+    def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
+        # Accumualte does nothing
+        pass
+
+    def step(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
+        
+        for _ in range(self.theta_loops):
+
+            dataset = torch_data.TensorDataset(x.f, t.f)
+            for x_i, t_i in torch_data.DataLoader(
+                dataset, batch_size=self.theta_batch_size, 
+            ):
+                y_i = self.forward_nn(iou(x_i), iou(t_i))
+                self.theta_optim.zero_grad()
+                cost = self.learn_criterion.assess(iou(y_i), iou(t_i))
+                cost.backward()
+                self.theta_optim.step()
+
+    def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
+        x_optim = torch.optim.Adam(x.f, lr=self.lr)
+        for _ in range(self.x_loops):
+            y = self.forward_nn(x)
+            x_optim.zero_grad()
+            cost = self.learn_criterion.assess(iou(y), t)
+            cost.backward()
+            x_optim.step()
+        return x.acc_grad()
+
+    def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> Tuple | Any:
+        
+        y = state._yl = self.linear(x.f)
+        return self.activation(y)
 
 
 class Network(zenkai.GradLearner):
