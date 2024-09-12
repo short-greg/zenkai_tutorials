@@ -13,6 +13,13 @@ class Layer(LearningMachine):
         self, in_features: int, out_features: int, 
         lmode: zenkai.LMode=zenkai.LMode.Default
     ):
+        """initialize
+
+        Args:
+            in_features (int): The number of input features
+            out_features (int): The number of output features
+            lmode (zenkai.LMode, optional): The learning model to use. Defaults to zenkai.LMode.Default.
+        """
 
         super().__init__(lmode)
         self.linear = nn.Linear(in_features, out_features)
@@ -117,6 +124,8 @@ class LoopLayer(LearningMachine):
                 self.theta_optim.step()
 
     def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
+        x = x.clone()
+        x.freshen_()
         x_optim = torch.optim.Adam([x.f], lr=self.lr)
         sub_state = state.sub('sub')
         for _ in range(self.x_loops):
@@ -126,7 +135,7 @@ class LoopLayer(LearningMachine):
             cost = self.learn_criterion.assess(iou(y), t)
             cost.backward()
             x_optim.step()
-        return x.acc_grad()
+        return x
 
     def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> Tuple | Any:
         
@@ -150,7 +159,7 @@ class Network(zenkai.GradLearner):
         self._optim = torch.optim.Adam(
             params=self.parameters()
         )
-    
+
     def step(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State):
         self._optim.step()
         self._optim.zero_grad()

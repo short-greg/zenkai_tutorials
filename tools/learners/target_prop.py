@@ -3,20 +3,75 @@ import zenkai
 from zenkai import State, IO, Idx, iou
 from torch import Tensor
 import zenkai
-from ..modules import Layer
+# from ..modules import Layer
 import torch.nn as nn
 import typing
 
 import zenkai
 from zenkai import State, IO, Idx
 from torch import nn
-from ..modules import Layer
+# from ..modules import Layer
 import torch
 import typing
 
 
 OPT_MODULE_TYPE = typing.Optional[typing.Type[nn.Module]]
 MODULE_TYPE = typing.Type[nn.Module]
+
+
+class NullModule(nn.Module):
+
+    def forward(self, *x):
+
+        if len(x) > 1:
+            return x
+        return x[0]
+
+
+class Layer(zenkai.LearningMachine):
+
+    def __init__(
+        self, in_features: int, out_features: int, 
+        in_activation: typing.Type[nn.Module]=None, 
+        out_activation: typing.Type[nn.Module]=None,
+        dropout_p: float=None,
+        batch_norm: bool=False,
+        x_lr: float=None,
+        lmode: zenkai.LMode=zenkai.LMode.Standard
+    ):
+        """initialize
+
+        Args:
+            in_features (int): The number of input features
+            out_features (int): The number of output features
+            lmode (zenkai.LMode, optional): The learning model to use. Defaults to zenkai.LMode.Default.
+        """
+
+        super().__init__(lmode)
+        self.linear = nn.Linear(in_features, out_features)
+        self.loss = nn.MSELoss(reduction='sum')
+        self.in_activation = in_activation() if in_activation is not None else NullModule()
+        self.activation = out_activation() if out_activation is not None else NullModule()
+        self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
+        self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
+        self.x_lr = x_lr
+
+    def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
+
+        cost = self.loss(state._y.f, t.f)
+        cost.backward()   
+    
+    def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
+        return x.acc_grad(self.x_lr)
+
+    def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> typing.Union[typing.Any, None]:
+        
+        y = self.in_activation(x.f)
+        y = self.dropout(y)
+        y = self.linear(y)
+        y = self.norm(y)
+        return self.activation(y)
+
 
 
 class AutoencoderLearner(zenkai.GradLearner):
@@ -48,19 +103,18 @@ class AutoencoderLearner(zenkai.GradLearner):
         self.forward_on = True
         self.reverse_on = True
         self.feedforward = Layer(
-            in_features, out_features, forward_norm, 
-            forward_act, dropout_p, forward_in_act
+            in_features, out_features, 
+            forward_in_act, forward_act, dropout_p, forward_norm
         )
         self.targetf = targetf if targetf is not None else lambda x: x
         self.rec_weight = rec_weight
 
         self.feedback = Layer(
-            out_features, in_features, reverse_norm, reverse_act
+            out_features, in_features, None, reverse_act, None, reverse_norm
         )
         self.assessment = None
         self.r_assessment = None
-        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta(self)
+        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
         self.i = 0
 
     def forward_nn(self, x: IO, state: State, batch_idx: Idx = None) -> Tensor:
@@ -93,6 +147,11 @@ class AutoencoderLearner(zenkai.GradLearner):
         self.assessment = z_loss
         self.r_assessment = t_loss
 
+    def step(self, x: IO, t: IO, state: State):
+        
+        self._optim.step()
+        self._optim.zero_grad()
+
     def step_x(self, x: IO, t: IO, state: State, batch_idx: Idx = None) -> IO:
         """Propagate the target by passing it throug 
 
@@ -115,8 +174,10 @@ class TargetPropLearner(zenkai.GradLearner):
         h2_features: int, h3_features: int, out_features: int,
         act: OPT_MODULE_TYPE=nn.LeakyReLU,
         reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+        in_act: OPT_MODULE_TYPE=None,
         rec_loss: MODULE_TYPE=nn.MSELoss,
-        targetf: OPT_MODULE_TYPE=None
+        targetf: OPT_MODULE_TYPE=None,
+        out_x_lr: float=None
     ):
         """
 
@@ -139,21 +200,27 @@ class TargetPropLearner(zenkai.GradLearner):
         )
         self.layer2 = AutoencoderLearner(
             h1_features, h2_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
+            forward_in_act=in_act,
             rec_loss=rec_loss, forward_norm=True, reverse_norm=True,
             targetf=targetf
         )
         self.layer3 = AutoencoderLearner(
             h2_features, h3_features, 1.0, dropout_p=0.25, forward_act=act, reverse_act=reverse_act,
+            forward_in_act=in_act,
             rec_loss=rec_loss, forward_norm=True, reverse_norm=True,
             targetf=targetf
         )
         self.layer4 = Layer(
-            h3_features, out_features, False, act=None
+            h3_features, out_features, None, None, None, False, x_lr=out_x_lr
         )
-        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta([self.layer4])
+        self._optim = torch.optim.Adam(self.layer4.parameters(), lr=1e-3)
         self.assessments = []
         self.r_assessments = []
+
+    def step(self, x: IO, t: IO, state: State):
+        
+        self._optim.step()
+        self._optim.zero_grad()
 
     def accumulate(self, x: IO, state: State, batch_idx: Idx=None):
         super().accumulate(x, state, batch_idx)
@@ -183,21 +250,25 @@ class BaselineLearner1(zenkai.GradLearner):
         self.reverse_on = True
 
         self.layer1 = Layer(
-            in_features, h1_features, True, dropout_p=0.5
+            in_features, h1_features, None, nn.ReLU, 0.5, True
         )
         self.layer2 = Layer(
-            h1_features, h2_features, True, dropout_p=0.25
+            h1_features, h2_features, None, nn.ReLU, 0.5, True
         )
         self.layer3 = Layer(
-            h2_features, h3_features, True, dropout_p=0.25
+            h2_features, h3_features, None, nn.ReLU, 0.25, True
         )
         self.layer4 = Layer(
-            h3_features, out_features, False, None
+            h3_features, out_features, None, None, 0.15, False
         )
-        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta(self)
+        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
         self.assessments = []
         self.r_assessments = []
+
+    def step(self, x: IO, t: IO, state: State):
+        
+        self._optim.step()
+        self._optim.zero_grad()
 
     def forward_nn(self, x: IO, state: State, batch_idx: Idx = None) -> Tensor:
 
@@ -228,6 +299,11 @@ class DiffAutoencoderLearner(AutoencoderLearner):
             targetf=targetf
           )
         self.x_lr = x_lr
+
+    def step(self, x: IO, t: IO, state: State):
+        
+        self._optim.step()
+        self._optim.zero_grad()
 
     def step_x(self, x: IO, t: IO, state: State) -> IO:
         """Propagate the target and the output back and calculate the difference
@@ -287,8 +363,7 @@ class DiffTargetPropLearner(zenkai.GradLearner):
           h3_features, out_features,
           False, None, None
         )
-        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta()
+        self._optim = torch.optim.Adam(self.layer4.parameters(), lr=1e-3)
         self.assessments = []
         self.r_assessments = []
     
@@ -349,8 +424,7 @@ class DiffTargetPropLearner2(zenkai.GradLearner):
           forward_norm=True, reverse_norm=True,
           forward_in_act=forward_in_act
         )
-        self._optim = zenkai.OptimFactory('Adam', lr=1e-3).comp()
-        self._optim.prep_theta([self.layer4])
+        self._optim = torch.optim.Adam(self.layer4.parameters(), lr=1e-3)
         self.assessments = []
         self.r_assessments = []
     
