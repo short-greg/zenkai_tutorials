@@ -19,7 +19,8 @@ def train(
     dataset: torch_data.Dataset,
     n_epochs: int, device='cpu',
     batch_size: int=128,
-    validate: bool=False
+    validate: bool=False,
+    callback: typing.Callable[[int, int], None]=None
 ):
     learner = learner.to(device)
     loss = nn.CrossEntropyLoss(reduction='mean')
@@ -27,6 +28,7 @@ def train(
     zenkai.set_lmode(learner, zenkai.LMode.WithStep)
     losses = []
 
+    total_iters = 0
     for i in range(n_epochs):
 
         dataloader = torch_data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -48,7 +50,7 @@ def train(
                     assert (before != zenkai.params.to_pvec(learner)).any()
                 results['loss'].append(assessment.item())
                 losses.append(assessment.item())
-                assessments = {i: v.item() for i, v in enumerate(learner.assessments)}
+                assessments = {i: v.item() if isinstance(v, torch.Tensor) else v for i, v in enumerate(learner.assessments)}
 
                 for i, v in assessments.items():
                     if str(i) not in results:
@@ -59,6 +61,9 @@ def train(
                     k: np.mean(v) for k, v in results.items()
                 })
                 pbar.update(1)
+                if callback is not None:
+                    callback(i, j, total_iters)
+                total_iters += 1
     return losses
 
 
