@@ -4,17 +4,107 @@ from torch import nn
 import typing
 
 
+
+class SignSTE(torch.autograd.Function):
+    """Use to clip the grad between two values
+    Useful for smooth maximum/smooth minimum
+    """
+    @staticmethod
+    def forward(ctx, x):
+        """
+        Forward pass of the Binary Step function.
+        """
+        ctx.save_for_backward(x)
+        return torch.sign(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        Backward pass of the Binary Step function using the Straight-Through Estimator.
+        """
+        (x,) = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[(x < -1) | (x > 1)] = 0
+        return grad_input
+
+
+def sign_ste(x: torch.Tensor) -> torch.Tensor:
+    """Execute the sign function
+
+    Args:
+        x (torch.Tensor): the input
+
+    Returns:
+        torch.Tensor: -1 for values less than 0 otherwise 1
+    """
+    return SignSTE.apply(x)
+
+
+class StochasticSTE(torch.autograd.Function):
+    """Use to clip the grad between two values
+    Useful for smooth maximum/smooth minimum
+    """
+
+    @staticmethod
+    def forward(ctx, x):
+        """
+        Forward pass of the Binary Step function.
+        """
+        ctx.save_for_backward(x)
+        x = torch.sigmoid(x)
+        return (x <= torch.rand_like(x)).type_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        Backward pass of the Binary Step function using the Straight-Through Estimator.
+        """
+        (x,) = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[(x < 0) | (x > 1)] = 0
+        return grad_input
+
+
+def stochastic_ste(x: torch.Tensor) -> torch.Tensor:
+    """Execute the sign function
+
+    Args:
+        x (torch.Tensor): the input
+
+    Returns:
+        torch.Tensor: -1 for values less than 0 otherwise 1
+    """
+    return SignSTE.apply(x)
+
+
 class Stochastic(nn.Module):
+
+    def __init__(self, use_ste: bool=False, use_sigmoid: bool=False):
+        super().__init__()
+        self._use_ste = use_ste
+        self._use_sigmoid = use_sigmoid
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+        if self._use_ste:
+            return stochastic_ste(x)
+
+        if self._use_sigmoid:
+            x = torch.sigmoid(x)
 
         return (torch.rand_like(x) <= x).type_as(x)
 
 
 class Sign(nn.Module):
 
+    def __init__(self, use_ste: bool=False) -> None:
+        super().__init__()
+        self._use_ste = use_ste
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
+        if self._use_ste:
+            return sign_ste(x)
         return x.sign()
 
 

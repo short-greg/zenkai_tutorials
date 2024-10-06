@@ -83,7 +83,8 @@ class LayerLearner(zenkai.LearningMachine):
         self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
         self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
         self.x_lr = x_lr
-        self._optim = torch.optim.Adam(self.parameters(), lr=1e-4)
+        self.max_norm = 1.0
+        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
 
     def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
 
@@ -91,7 +92,7 @@ class LayerLearner(zenkai.LearningMachine):
         cost.backward()   
     
     def step(self, x: IO, t: IO, state: State):
-        
+        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_norm)
         self._optim.step()
         self._optim.zero_grad()
 
@@ -107,11 +108,9 @@ class LayerLearner(zenkai.LearningMachine):
         return self.activation(y)
 
 
-
 class AutoencoderLearner(zenkai.GradLearner):
     """Component for building a TargetPropagationLearner
     """
-
     def __init__(
         self, in_features: int, out_features: int, 
         rec_weight: float=1.0, dropout_p: float=None, 
@@ -135,8 +134,8 @@ class AutoencoderLearner(zenkai.GradLearner):
             dropout_p (float, optional): The amount of dropout to use. Defaults to None.
         """
         super().__init__()
-        self._criterion = zenkai.NNLoss('MSELoss', reduction='sum')
-        self._reverse_criterion = zenkai.NNLoss(rec_loss, reduction='sum')
+        self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
+        self._reverse_criterion = zenkai.NNLoss(rec_loss, reduction='mean')
         self.forward_on = True
         self.reverse_on = True
         self.feedforward = Layer(
@@ -151,9 +150,11 @@ class AutoencoderLearner(zenkai.GradLearner):
         )
         self.assessment = None
         self.r_assessment = None
-        self._optim = torch.optim.Adam(self.parameters(), lr=1e-4)
+        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
         self.i = 0
         self.l2 = l2
+        self.max_norm = 0.1
+        self._scheduler = torch.optim.lr_scheduler.StepLR(self._optim, step_size=40, gamma=0.9)
 
         self.train_reconstruction = train_reconstruction
         self.train_predictor = train_predictor
@@ -194,9 +195,9 @@ class AutoencoderLearner(zenkai.GradLearner):
             t_loss = 0.0
     
         p_loss = 0
-        if self.l2 is not None:
-            for p in chain(self.feedforward.parameters(), self.feedback.parameters()):
-                p_loss = p_loss + (p.pow(2).sum() * self.l2)
+        # if self.l2 is not None:
+        #     for p in chain(self.feedforward.parameters(), self.feedback.parameters()):
+        #         p_loss = p_loss + (p.pow(2).sum() * self.l2)
 
         if not (isinstance(t_loss, float) and isinstance(z_loss, float)):
             (t_loss + self.rec_weight * z_loss + p_loss).backward()
@@ -207,7 +208,9 @@ class AutoencoderLearner(zenkai.GradLearner):
 
     def step(self, x: IO, t: IO, state: State):
         
+        torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_norm)
         self._optim.step()
+        self._scheduler.step()
         self._optim.zero_grad()
 
     def step_x(self, x: IO, t: IO, state: State) -> IO:
@@ -311,27 +314,29 @@ class BaselineLearner1(zenkai.GradLearner):
 
     def __init__(
         self, in_features: int, h1_features: int,
-        h2_features: int, h3_features: int, out_features: int
+        h2_features: int, h3_features: int, out_features: int,
+        activation: typing.Callable[[], nn.Module]=nn.LeakyReLU,
+        dropout_p: float=0.5,
+        lr: float=1e-3
     ):
         super().__init__()
         self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
         self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
         self.forward_on = True
-        self.reverse_on = True
 
         self.layer1 = LayerLearner(
-            in_features, h1_features, None, nn.ReLU, 0.5, True
+            in_features, h1_features, None, activation, dropout_p, True
         )
         self.layer2 = LayerLearner(
-            h1_features, h2_features, None, nn.ReLU, 0.5, True
+            h1_features, h2_features, None, activation, dropout_p * 0.5, True
         )
         self.layer3 = LayerLearner(
-            h2_features, h3_features, None, nn.ReLU, 0.25, True
+            h2_features, h3_features, None, activation, dropout_p * 0.5, True
         )
         self.layer4 = LayerLearner(
-            h3_features, out_features, None, None, 0.15, False
+            h3_features, out_features, None, None, None, False
         )
-        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
+        self._optim = torch.optim.Adam(self.parameters(), lr=lr)
         self.assessments = []
         self.r_assessments = []
 
