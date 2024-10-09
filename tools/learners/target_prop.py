@@ -6,7 +6,8 @@ import zenkai
 import torch.nn as nn
 import torch
 import typing
-from itertools import chain
+from .. import utils
+import math
 
 
 OPT_MODULE_TYPE = typing.Optional[typing.Type[nn.Module]]
@@ -108,7 +109,7 @@ class LayerLearner(zenkai.LearningMachine):
         return self.activation(y)
 
 
-class AutoencoderLearner(zenkai.GradLearner):
+class AutoencoderLearner(zenkai.LearningMachine):
     """Component for building a TargetPropagationLearner
     """
     def __init__(
@@ -195,14 +196,11 @@ class AutoencoderLearner(zenkai.GradLearner):
             t_loss = 0.0
     
         p_loss = 0
-        # if self.l2 is not None:
-        #     for p in chain(self.feedforward.parameters(), self.feedback.parameters()):
-        #         p_loss = p_loss + (p.pow(2).sum() * self.l2)
 
         if not (isinstance(t_loss, float) and isinstance(z_loss, float)):
             (t_loss + self.rec_weight * z_loss + p_loss).backward()
 
-        self.i += 1
+        # self.i += 1
         self.assessment = z_loss
         self.r_assessment = t_loss
 
@@ -397,6 +395,186 @@ class DiffAutoencoderLearner(AutoencoderLearner):
         return x.acc_dx([yx - tx], self.x_lr).detach()
 
 
+class DiffConvAutoencoderLearner(zenkai.LearningMachine):
+    
+    def __init__(
+        self, in_features: int, out_features: int, 
+        in_size: typing.Tuple[int], 
+        kernel_size: typing.Tuple[int], stride: typing.Tuple[int]=(1, 1),
+        rec_weight: float = 1, 
+        dropout_p: float = None, x_lr: float=1.0, 
+        forward_act: typing.Type[nn.Module]=nn.LeakyReLU,
+        reverse_act: typing.Type[nn.Module]=nn.LeakyReLU,
+        forward_in_act: typing.Type[nn.Module]=None,
+        forward_norm: bool=True,
+        reverse_norm: bool=True,
+        rec_loss: typing.Type[nn.Module]=nn.MSELoss,
+        targetf: OPT_MODULE_TYPE=None,
+        train_predictor: bool=True,
+        train_reconstruction: bool=True,
+
+    ):
+        super().__init__()
+        padding = utils.calculate_conv_padding(in_size, kernel_size, stride)
+        out_size = utils.compute_conv_output_size(in_size, kernel_size, stride, padding)
+        deconv_out_size = utils.compute_deconv_output_size(out_size, kernel_size, stride, padding)
+
+        out_padding = utils.calculate_deconv_out_padding(deconv_out_size, in_size)
+        self.conv = nn.Conv2d(in_features, out_features, kernel_size, stride, padding=padding)
+        self.deconv = nn.ConvTranspose2d(
+            out_features, in_features, kernel_size, 
+            stride, padding=padding, output_padding=out_padding)
+        self.forward_act = forward_act()
+        self.reverse_act = reverse_act()
+        self.forward_in_act = forward_in_act() if forward_in_act else NullModule()
+        self.forward_norm = nn.BatchNorm2d(out_features) if forward_norm else NullModule()
+        self.reverse_norm = nn.BatchNorm2d(in_features) if reverse_norm else NullModule()
+        self.dropout = nn.Dropout2d(dropout_p) if dropout_p is not None else NullModule()
+
+        self.feedback = nn.Sequential(
+            self.deconv,
+            self.reverse_norm,
+            self.reverse_act
+        )
+        self.rec_weight = rec_weight
+        self.rec_loss = rec_loss()
+        self.targetf = targetf() if targetf is not None else NullModule()
+        self.x_lr = x_lr
+        self.out_size = out_size
+
+        self.assessments = []
+        self.r_assessments = []
+        self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
+    
+        self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
+        self._reverse_criterion = zenkai.NNLoss(rec_loss, reduction='mean')
+        self.train_reconstruction = train_reconstruction
+        self.train_predictor = train_predictor
+
+    def train_mode(self, train_reconstruction: bool=True, train_predictor: bool=True):
+
+        self.train_reconstruction = train_reconstruction
+        self.train_predictor = train_predictor
+    
+    def accumulate(self, x, t, state, **kwargs):
+
+        if self.train_reconstruction:
+            z = self.feedback(state._y.f)
+            z_loss = self._reverse_criterion.assess(x, iou(z))
+        else:
+            z_loss = 0.
+        if self.train_predictor:
+            t_loss = self._criterion.assess(state._y, t)
+        else:
+            t_loss = 0.0
+    
+        p_loss = 0
+
+        if not (isinstance(t_loss, float) and isinstance(z_loss, float)):
+            (t_loss + self.rec_weight * z_loss + p_loss).backward()
+
+        # self.i += 1
+        self.assessment = z_loss
+        self.r_assessment = t_loss
+
+    def step(self, x: IO, t: IO, state: State):
+        
+        self._optim.step()
+        self._optim.zero_grad()
+
+    def step_x(self, x: IO, t: IO, state: State) -> IO:
+        """Propagate the target and the output back and calculate the difference
+
+        Args:
+            x (IO): the input
+            t (IO): the target
+            state (State): the learning state
+
+        Returns:
+            IO: the target for the incoming layer
+        """
+        yx = self.feedback(state._y.f)
+        tx = self.feedback(self.targetf(t.f))
+
+        return x.acc_dx([yx - tx], self.x_lr).detach()
+
+    def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> typing.Union[typing.Any, None]:
+        
+        y = self.forward_in_act(x.f)
+        y = self.dropout(y)
+        y = self.conv(y)
+        y = self.forward_norm(y)
+        return self.forward_act(y)
+
+
+class DiffConvTargetPropLearner(zenkai.GradLearner):
+
+    def __init__(
+      self, in_features: int, in_size: typing.Tuple[int], h1_features: int,
+      h2_features: int, h3_features: int, out_features: int, kernel_size: typing.Tuple[int],
+      stride: typing.Tuple[int]=(1, 1),
+      x_lr: float=1.0, out_x_lr: float=1.0,
+      dropout_p: float=0.5,
+      rec_weight: float=1.0,
+      act: OPT_MODULE_TYPE=nn.LeakyReLU,
+      reverse_act: OPT_MODULE_TYPE=nn.LeakyReLU,
+      forward_in_act: OPT_MODULE_TYPE=None,
+      rec_loss: MODULE_TYPE=nn.MSELoss
+    ):
+        # Same as TargetPropLearner
+        # but uses the DiffAutoencoderLearner
+        super().__init__()
+        self._criterion = zenkai.NNLoss('MSELoss', reduction='mean')
+        self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
+        self.forward_on = True
+        self.reverse_on = True
+
+        self.layer1 = DiffConvAutoencoderLearner(
+            in_features, h1_features, in_size, kernel_size,
+            stride, rec_weight, dropout_p, x_lr, act, nn.Tanh,
+            forward_in_act, True, False
+        )
+
+        self.layer2 = DiffConvAutoencoderLearner(
+            h1_features, h2_features, self.layer1.out_size, kernel_size,
+            stride, rec_weight, dropout_p, x_lr, act, reverse_act,
+            forward_in_act, True, True, rec_loss=rec_loss
+        )
+
+        self.layer3 = DiffConvAutoencoderLearner(
+            h2_features, h3_features, self.layer2.out_size, kernel_size,
+            stride, rec_weight, dropout_p, x_lr, act, reverse_act,
+            forward_in_act, True, True, rec_loss=rec_loss
+        )
+        h3_out_features = math.prod(self.layer3.out_size) * h3_features
+
+        self.layer4 = LayerLearner(
+            h3_out_features, out_features, None,
+            None, x_lr=out_x_lr
+        )
+        self._optim = torch.optim.Adam(self.layer4.parameters(), lr=1e-3)
+        self.assessments = []
+        self.r_assessments = []
+    
+    def step(self, x, t, state):
+        pass
+
+    def accumulate(self, x: IO, t: IO, state: State):
+
+        self._learn_criterion.assess(state._y, t).backward()
+
+        self.assessments = [layer.assessment for layer in [self.layer1, self.layer2, self.layer3]]
+        self.r_assessments = [layer.r_assessment for layer in [self.layer1, self.layer2, self.layer3]]
+
+    def forward_nn(self, x: IO, state: State) -> torch.Tensor:
+
+        y = self.layer1(x.f)
+        y = self.layer2(y)
+        y = self.layer3(y)
+        y = y.flatten(1)
+        return self.layer4(y)
+
+
 class DiffTargetPropLearner(zenkai.GradLearner):
 
     def __init__(
@@ -415,7 +593,6 @@ class DiffTargetPropLearner(zenkai.GradLearner):
         self._learn_criterion = zenkai.NNLoss('MSELoss', reduction='sum', weight=0.5)
         self.forward_on = True
         self.reverse_on = True
-
         self.layer1 = DiffAutoencoderLearner(
           in_features, h1_features, 1.0, 0.5, x_lr=x_lr, 
           forward_act=act, reverse_act=nn.Tanh, rec_loss=nn.MSELoss,
@@ -436,13 +613,13 @@ class DiffTargetPropLearner(zenkai.GradLearner):
         )
         self.layer4 = LayerLearner(
           h3_features, out_features,
-          False, None, None
+          None, None, None
         )
         self._optim = torch.optim.Adam(self.layer4.parameters(), lr=1e-3)
         self.assessments = []
         self.r_assessments = []
     
-    def accumulate(self, x: IO, state: State):
+    def accumulate(self, x: IO, t: IO, state: State):
         super().accumulate(x, state)
         self.assessments = [layer.assessment for layer in [self.layer1, self.layer2, self.layer3]]
         self.r_assessments = [layer.r_assessment for layer in [self.layer1, self.layer2, self.layer3]]
@@ -503,7 +680,7 @@ class DiffTargetPropLearner2(zenkai.GradLearner):
         self.assessments = []
         self.r_assessments = []
     
-    def accumulate(self, x: IO, state: State):
+    def accumulate(self, x: IO, t: IO, state: State):
         super().accumulate(x, state)
         self.assessments = [layer.assessment for layer in [self.layer1, self.layer2, self.layer3]]
         self.r_assessments = [layer.r_assessment for layer in [self.layer1, self.layer2, self.layer3]]

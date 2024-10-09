@@ -20,7 +20,8 @@ def train(
     n_epochs: int, device='cpu',
     batch_size: int=128,
     validate: bool=False,
-    callback: typing.Callable[[int, int], None]=None
+    callback: typing.Callable[[int, int], None]=None,
+    flatten: bool=True
 ):
     learner = learner.to(device)
     loss = nn.CrossEntropyLoss(reduction='mean')
@@ -43,7 +44,10 @@ def train(
 
                 if validate:
                     before = zenkai.params.to_pvec(learner)
-                y = learner(x.view(x.shape[0], -1))
+                if flatten:
+                    x = x.flatten(1)
+                
+                y = learner(x)
                 assessment = loss(y, x1_t)
                 assessment.backward()
                 if validate:
