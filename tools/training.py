@@ -23,16 +23,34 @@ def train(
     callback: typing.Callable[[int, int], None]=None,
     flatten: bool=True
 ):
+    """_summary_
+
+    Args:
+        learner (LearningMachine): 
+        dataset (torch_data.Dataset): 
+        n_epochs (int): 
+        device (str, optional): . Defaults to 'cpu'.
+        batch_size (int, optional): . Defaults to 128.
+        validate (bool, optional): . Defaults to False.
+        callback (typing.Callable[[int, int], None], optional): . Defaults to None.
+        flatten (bool, optional): . Defaults to True.
+
+    Returns:
+        _type_: 
+    """
     learner = learner.to(device)
     loss = nn.CrossEntropyLoss(reduction='mean')
 
     zenkai.set_lmode(learner, zenkai.LMode.WithStep)
     losses = []
+    epoch_results = {}
 
     total_iters = 0
     for i in range(n_epochs):
 
-        dataloader = torch_data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        dataloader = torch_data.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True
+        )
 
         with tqdm.tqdm(total=len(dataloader)) as pbar:
 
@@ -51,10 +69,16 @@ def train(
                 assessment = loss(y, x1_t)
                 assessment.backward()
                 if validate:
-                    assert (before != zenkai.params.to_pvec(learner)).any()
+                    assert (before != zenkai.params.to_pvec(
+                        learner)
+                    ).any()
                 results['loss'].append(assessment.item())
                 losses.append(assessment.item())
-                assessments = {i: v.item() if isinstance(v, torch.Tensor) else v for i, v in enumerate(learner.assessments)}
+                assessments = {
+                    i: v.item() 
+                    if isinstance(v, torch.Tensor) 
+                    else v for i, v in enumerate(learner.assessments)
+                }
 
                 for i, v in assessments.items():
                     if str(i) not in results:
@@ -68,7 +92,12 @@ def train(
                 if callback is not None:
                     callback(i, j, total_iters)
                 total_iters += 1
-    return losses
+            for k, v in results.items():
+                if k not in epoch_results:
+                    epoch_results[k] = []
+                epoch_results[k].extend(v)
+
+    return losses, epoch_results
 
 
 def classify(

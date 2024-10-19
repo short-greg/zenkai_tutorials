@@ -115,12 +115,13 @@ class Clamp(nn.Module):
         return x.clamp(-1.0, 1.0)
 
 
+
 class NullModule(nn.Module):
 
     def forward(self, *x) -> typing.Union[torch.Tensor, typing.Tuple[torch.Tensor]]:
 
         if len(x) == 1:
-            return x
+            return x[0]
         return x
 
 
@@ -132,7 +133,6 @@ class Layer(nn.Module):
         out_activation: typing.Type[nn.Module]=None,
         dropout_p: float=None,
         batch_norm: bool=False,
-        x_lr: float=None,
         # lmode: zenkai.LMode=zenkai.LMode.Standard
     ):
         """initialize
@@ -150,60 +150,151 @@ class Layer(nn.Module):
         self.activation = out_activation() if out_activation is not None else NullModule()
         self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
         self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
-        self.x_lr = x_lr
 
     def forward(self, x: torch.Tensor) -> typing.Union[typing.Any, None]:
         
-        y = self.in_activation(x.f)
+        y = self.in_activation(x)
         y = self.dropout(y)
         y = self.linear(y)
         y = self.norm(y)
         return self.activation(y)
 
 
-class LayerLearner(zenkai.LearningMachine):
+# class Layer(nn.Module):
+#     """A layer consisting of an in_activtion, an out_activation, dropout, and
+#     linear operations
+#     """
 
-    def __init__(
-        self, in_features: int, out_features: int, 
-        in_activation: typing.Type[nn.Module]=None, 
-        out_activation: typing.Type[nn.Module]=None,
-        dropout_p: float=None,
-        batch_norm: bool=False,
-        x_lr: float=None,
-        lmode: zenkai.LMode=zenkai.LMode.Standard
-    ):
-        """initialize
+#     def __init__(
+#         self, in_features: int, out_features: int, 
+#         in_activation: typing.Type[nn.Module]=None, 
+#         out_activation: typing.Type[nn.Module]=None,
+#         dropout_p: float=None,
+#         batch_norm: bool=False,
+#     ):
+#         """Create a normal nn.Module layer
 
-        Args:
-            in_features (int): The number of input features
-            out_features (int): The number of output features
-            lmode (zenkai.LMode, optional): The learning model to use. Defaults to zenkai.LMode.Default.
-        """
+#         Args:
+#             in_features (int): The number of input features
+#             out_features (int): The number of output features
+#             in_activation (typing.Type[nn.Module], optional): The activation on the input. Defaults to None.
+#             out_activation (typing.Type[nn.Module], optional): The activation on the output. Defaults to None.
+#             dropout_p (float, optional): The amount to dropout by. Defaults to None.
+#             batch_norm (bool, optional): Whether to use batch norm. Defaults to False.
+#         """
 
-        super().__init__(lmode)
-        self.linear = nn.Linear(in_features, out_features)
-        self.loss = nn.MSELoss(reduction='sum')
-        self.in_activation = in_activation() if in_activation is not None else NullModule()
-        self.activation = out_activation() if out_activation is not None else NullModule()
-        self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
-        self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
-        self.x_lr = x_lr
+#         super().__init__()
+#         self.linear = nn.Linear(in_features, out_features)
+#         self.loss = nn.MSELoss(reduction='sum')
+#         self.in_activation = in_activation() if in_activation is not None else NullModule()
+#         self.activation = out_activation() if out_activation is not None else NullModule()
+#         self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
+#         self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
 
-    def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
+#     def forward(self, x: torch.Tensor) -> typing.Union[typing.Any, None]:
+#         """Compute the output of the laeyr
 
-        cost = self.loss(state._y.f, t.f)
-        cost.backward()   
-    
-    def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
-        return x.acc_grad(self.x_lr)
+#         Args:
+#             x (torch.Tensor): 
 
-    def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> typing.Union[typing.Any, None]:
+#         Returns:
+#             typing.Union[typing.Any, None]: 
+#         """
         
-        y = self.in_activation(x.f)
-        y = self.dropout(y)
-        y = self.linear(y)
-        y = self.norm(y)
-        return self.activation(y)
+#         y = self.in_activation(x)
+#         y = self.dropout(y)
+#         y = self.linear(y)
+#         y = self.norm(y)
+#         return self.activation(y)
+
+
+# class LayerLearner(zenkai.LearningMachine):
+#     """A Layer that implements learning functionality
+#     """
+
+#     def __init__(
+#         self, in_features: int, out_features: int, 
+#         in_activation: typing.Type[nn.Module]=None, 
+#         out_activation: typing.Type[nn.Module]=None,
+#         dropout_p: float=None,
+#         batch_norm: bool=False,
+#         x_lr: float=None,
+#         lmode: zenkai.LMode=zenkai.LMode.Standard
+#     ):
+#         """Create a layer that implements learning functionality
+
+#         Args:
+#             in_features (int): The number of input features
+#             out_features (int): The number of output features
+#             in_activation (typing.Type[nn.Module], optional): The activation on the input. Defaults to None.
+#             out_activation (typing.Type[nn.Module], optional): The activation on the output. Defaults to None.
+#             dropout_p (float, optional): The amount to dropout by. Defaults to None.
+#             batch_norm (bool, optional): Whether to use batch norm. Defaults to False.
+#         """
+
+#         super().__init__(lmode)
+#         self.linear = nn.Linear(in_features, out_features)
+#         self.loss = nn.MSELoss(reduction='sum')
+#         self.in_activation = in_activation() if in_activation is not None else NullModule()
+#         self.activation = out_activation() if out_activation is not None else NullModule()
+#         self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
+#         self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
+#         self.x_lr = x_lr
+#         self.max_norm = 1.0
+#         self._optim = torch.optim.Adam(self.parameters(), lr=1e-3)
+
+#     def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
+#         """Calculate the cost and execute the backward function on the cost
+
+#         Args:
+#             x (zenkai.IO): The input
+#             t (zenkai.IO): The target
+#             state (zenkai.State): The state
+#         """
+#         cost = self.loss(state._y.f, t.f)
+#         cost.backward()   
+    
+#     def step(self, x: IO, t: IO, state: State):
+#         """Clip the gradients and then step
+
+#         Args:
+#             x (IO): The input
+#             t (IO): The target
+#             state (State): The learning state
+#         """
+#         torch.nn.utils.clip_grad_norm_(self.parameters(), self.max_norm)
+#         self._optim.step()
+#         self._optim.zero_grad()
+
+#     def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
+#         """Accumulate the gradient
+
+#         Args:
+#             x (zenkai.IO): The input
+#             t (zenkai.IO): The target
+#             state (zenkai.State): The learning state
+
+#         Returns:
+#             zenkai.IO: 
+#         """
+#         return x.acc_grad(self.x_lr)
+
+#     def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> typing.Union[typing.Any, None]:
+#         """
+
+#         Args:
+#             x (zenkai.IO): The input
+#             state (zenkai.State): The learning state
+
+#         Returns:
+#             typing.Union[typing.Any, None]: 
+#         """
+#         y = self.in_activation(x.f)
+#         y = self.dropout(y)
+#         y = self.linear(y)
+#         y = self.norm(y)
+#         return self.activation(y)
+
 
 
 # class Layer(zenkai.GradLearner):

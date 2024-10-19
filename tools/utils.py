@@ -1,3 +1,4 @@
+import torch
 
 def compute_conv_output_size(input_size, kernel_size, stride, padding):
     """
@@ -55,3 +56,23 @@ def calculate_deconv_out_padding(deconv_out_size, output_size):
     padding0 = output_size[0] - deconv_out_size[0]
     padding1 = output_size[1] - deconv_out_size[1]
     return (padding0, padding1)
+
+
+class AmplifyGrad(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, input, by: float=1.0):
+        """
+        Amplify the gradient by a certain amount.
+        """
+        ctx.amplify_by = by
+        return input
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        
+        """
+        if ctx.amplify_by is None:
+            return torch.zeros_like(grad_output), None
+        return grad_output * ctx.amplify_by, None
