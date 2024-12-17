@@ -13,6 +13,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+import torch.utils
+
 
 def train(
     learner: LearningMachine,
@@ -23,7 +25,7 @@ def train(
     callback: typing.Callable[[int, int], None]=None,
     flatten: bool=True
 ):
-    """_summary_
+    """
 
     Args:
         learner (LearningMachine): 
@@ -36,7 +38,7 @@ def train(
         flatten (bool, optional): . Defaults to True.
 
     Returns:
-        _type_: 
+        : 
     """
     learner = learner.to(device)
     loss = nn.CrossEntropyLoss(reduction='mean')
@@ -60,34 +62,37 @@ def train(
                 x = x.to(device)
                 x1_t = x1_t.to(device)
 
-                if validate:
-                    before = zenkai.params.to_pvec(learner)
+                # if validate:
+                before = zenkai.params.to_pvec(learner)
                 if flatten:
                     x = x.flatten(1)
                 
                 y = learner(x)
                 assessment = loss(y, x1_t)
                 assessment.backward()
+
+                after = zenkai.params.to_pvec(learner)
+                
                 if validate:
-                    assert (before != zenkai.params.to_pvec(
-                        learner)
-                    ).any()
+                    assert (before != after).any()
+                
+                l2_p = (before - after).pow(2).mean()
                 results['loss'].append(assessment.item())
                 losses.append(assessment.item())
+
                 assessments = {
-                    i: v.item() 
-                    if isinstance(v, torch.Tensor) 
-                    else v for i, v in enumerate(learner.assessments)
+                    'l2_p': l2_p.item(),
+                    **learner.assessments(),
                 }
 
-                for i, v in assessments.items():
-                    if str(i) not in results:
-                        results[str(i)] = []
-                    results[str(i)].append(v)
+                for cur_a, v in assessments.items():
+                    if str(cur_a) not in results:
+                        results[str(cur_a)] = []
+                    results[str(cur_a)].append(v)
 
-                pbar.set_postfix({
+                pbar.set_postfix({**{'epoch': i}, **{
                     k: np.mean(v) for k, v in results.items()
-                })
+                }})
                 pbar.update(1)
                 if callback is not None:
                     callback(i, j, total_iters)

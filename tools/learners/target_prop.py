@@ -8,12 +8,12 @@ import torch
 import typing
 from .. import utils
 import math
-from ..modules import Layer, LayerLearner
+from ..modules import Layer, NullModule
+from .core import LayerLearner
 
 
 OPT_MODULE_TYPE = typing.Optional[typing.Type[nn.Module]]
 MODULE_TYPE = typing.Type[nn.Module]
-
 
 
 class AutoencoderLearner(zenkai.LearningMachine):
@@ -238,7 +238,6 @@ class TargetPropLearner(zenkai.GradLearner):
 class BaselineLearner1(zenkai.GradLearner):
     """Learner to use for comparison
     """
-
     def __init__(
         self, in_features: int, h1_features: int,
         h2_features: int, h3_features: int, out_features: int,
@@ -264,18 +263,24 @@ class BaselineLearner1(zenkai.GradLearner):
         self.forward_on = True
 
         self.layer1 = LayerLearner(
-            in_features, h1_features, None, activation, dropout_p, True
+            in_features, h1_features, None, 
+            activation, dropout_p, True
         )
         self.layer2 = LayerLearner(
-            h1_features, h2_features, None, activation, dropout_p * 0.5, True
+            h1_features, h2_features, None, 
+            activation, dropout_p * 0.5, True
         )
         self.layer3 = LayerLearner(
-            h2_features, h3_features, None, activation, dropout_p * 0.5, True
+            h2_features, h3_features, None, 
+            activation, dropout_p * 0.5, True
         )
         self.layer4 = LayerLearner(
-            h3_features, out_features, None, None, None, False
+            h3_features, out_features,
+            None, None, None, False
         )
-        self._optim = torch.optim.Adam(self.parameters(), lr=lr)
+        self._optim = torch.optim.Adam(
+            self.parameters(), lr=lr
+        )
         self.assessments = []
         self.r_assessments = []
 
@@ -583,7 +588,8 @@ class DiffTargetPropLearner(zenkai.GradLearner):
         self.forward_on = True
         self.reverse_on = True
         self.layer1 = DiffAutoencoderLearner(
-          in_features, h1_features, rec_weight, pred_weight, dropout_p, x_lr=x_lr, 
+          in_features, h1_features, rec_weight, 
+          pred_weight, dropout_p, x_lr=x_lr, 
           forward_act=act, reverse_act=nn.Tanh,
           rec_loss=nn.MSELoss, 
           forward_norm=True, reverse_norm=False,
@@ -591,7 +597,8 @@ class DiffTargetPropLearner(zenkai.GradLearner):
           forward_in_act=None,
         )
         self.layer2 = DiffAutoencoderLearner(
-          h1_features, h2_features, rec_weight, pred_weight, dropout_p=dropout_p, 
+          h1_features, h2_features, rec_weight, 
+          pred_weight, dropout_p=dropout_p, 
           x_lr=x_lr, forward_act=act, reverse_act=reverse_act, 
           rec_loss=rec_loss,
           forward_norm=True, reverse_norm=True,
@@ -599,7 +606,8 @@ class DiffTargetPropLearner(zenkai.GradLearner):
           forward_in_act=forward_in_act,
         )
         self.layer3 = DiffAutoencoderLearner(
-          h2_features, h3_features, rec_weight, pred_weight, dropout_p=dropout_p,
+          h2_features, h3_features, rec_weight, 
+          pred_weight, dropout_p=dropout_p,
           x_lr=x_lr, forward_act=act, reverse_act=reverse_act, 
           rec_loss=rec_loss,
           forward_norm=True, reverse_norm=True,
@@ -642,7 +650,7 @@ class DiffTargetPropLearner2(zenkai.GradLearner):
       forward_in_act: OPT_MODULE_TYPE=None,
       rec_loss: MODULE_TYPE=nn.MSELoss,
     ):
-        """_summary_
+        """
 
         Args:
             in_features (int): The number of input features
@@ -652,11 +660,11 @@ class DiffTargetPropLearner2(zenkai.GradLearner):
             out_features (int): The number of output features
             x_lr (float, optional): The amount to update x by. Defaults to 1.0.
             rec_weight (float, optional): The reconstruction weight. Defaults to 1.0.
-            out_rec_weight (float, optional): _description_. Defaults to 1.0.
-            act (OPT_MODULE_TYPE, optional): _description_. Defaults to nn.LeakyReLU.
-            reverse_act (OPT_MODULE_TYPE, optional): _description_. Defaults to nn.LeakyReLU.
-            forward_in_act (OPT_MODULE_TYPE, optional): _description_. Defaults to None.
-            rec_loss (MODULE_TYPE, optional): _description_. Defaults to nn.MSELoss.
+            out_rec_weight (float, optional): . Defaults to 1.0.
+            act (OPT_MODULE_TYPE, optional): . Defaults to nn.LeakyReLU.
+            reverse_act (OPT_MODULE_TYPE, optional): . Defaults to nn.LeakyReLU.
+            forward_in_act (OPT_MODULE_TYPE, optional): . Defaults to None.
+            rec_loss (MODULE_TYPE, optional): . Defaults to nn.MSELoss.
         """
         # Same as TargetPropLearner
         # but uses the DiffAutoencoderLearner
@@ -705,10 +713,12 @@ class DiffTargetPropLearner2(zenkai.GradLearner):
         """
         super().accumulate(x, t, state)
         self.assessments = [
-            layer.assessment for layer in [self.layer1, self.layer2, self.layer3]
+            layer.assessment for layer in 
+            [self.layer1, self.layer2, self.layer3]
         ]
         self.r_assessments = [
-            layer.r_assessment for layer in [self.layer1, self.layer2, self.layer3]
+            layer.r_assessment for layer in 
+            [self.layer1, self.layer2, self.layer3]
         ]
 
     def forward_nn(self, x: IO, state: State) -> torch.Tensor:

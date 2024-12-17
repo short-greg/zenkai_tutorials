@@ -25,6 +25,10 @@ class LayerLearner(zenkai.LearningMachine):
             lmode (zenkai.LMode, optional): The learning model to use. Defaults to zenkai.LMode.Default.
         """
 
+        # sum loss
+        # adam optimizer
+        # dropout
+
         super().__init__(lmode)
         self.linear = nn.Linear(in_features, out_features)
         self.loss = nn.MSELoss(reduction='sum')
@@ -33,23 +37,31 @@ class LayerLearner(zenkai.LearningMachine):
         self.norm = nn.BatchNorm1d(out_features) if batch_norm else NullModule()
         self.dropout = nn.Dropout(dropout_p) if dropout_p else NullModule()
         if lr is not None:
+            # self.optim = torch.optim.SGD(self.parameters(), lr=lr, momentum=0.8)
             self.optim = torch.optim.Adam(self.parameters(), lr=lr)
         else:
             self.optim = None
         self.x_lr = x_lr
+        self._assessments = {}
 
     def accumulate(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs):
 
-        cost = self.loss(state._y.f, t.f)
+        cost = self.loss(state._y.f, t.f) * 0.5
+        self._assessments['loss'] = cost.item()
         cost.backward()   
     
     def step_x(self, x: zenkai.IO, t: zenkai.IO, state: zenkai.State, **kwargs) -> zenkai.IO:
-        return x.acc_grad(self.x_lr)
+
+        self._assessments['x_grad'] = x.f.grad.abs().mean().item()
+        return x.acc_grad(self.x_lr).detach()
     
     def step(self, x, t, state, **kwargs):
         if self.optim is not None:
             self.optim.step()
             self.optim.zero_grad()
+
+    def assessments(self) -> typing.Dict:
+        return self._assessments
 
     def forward_nn(self, x: zenkai.IO, state: zenkai.State, **kwargs) -> typing.Union[typing.Any, None]:
         
@@ -58,4 +70,3 @@ class LayerLearner(zenkai.LearningMachine):
         y = self.linear(y)
         y = self.norm(y)
         return self.activation(y)
-
